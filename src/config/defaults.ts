@@ -3,12 +3,8 @@ import type { AppConfig } from "../types/runtime";
 export const defaultConfig: AppConfig = {
   runtime: {
     sessionPrefix: "nemagi",
-    paneHistoryLimit: 5000,
-    pollIntervalMs: 500,
     maxTurnWaitMs: 180000,
     workspaceDir: process.cwd(),
-    statusPaneName: "status",
-    judgePaneName: "judge",
   },
   agents: {
     codex: {
@@ -26,5 +22,12 @@ export const defaultConfig: AppConfig = {
       maxWaitMs: 120000,
       cliPath: "/usr/bin/gemini",
     },
+  },
+  judge: {
+    provider: "ollama",
+    enabled: true,
+    baseUrl: "http://127.0.0.1:11434",
+    model: "gemma3:latest",
+    timeoutMs: 30000,
   },
 };

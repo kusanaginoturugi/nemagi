@@ -1,8 +1,10 @@
 # 寝間着システム 操作マニュアル
 
+この文書は詳細手順用です。概要、実行条件、最短手順は [README.md](/home/onoue/src/nemagi/README.md) を参照してください。
+
 ## 概要
 
-寝間着システム (nemagi) は、同一のプロンプトを **Codex / Claude / Gemini** の 3 つの LLM CLI に同時投入し、各出力を tmux ペインに表示しながら収集・保存するツールです。
+寝間着システム (nemagi) は、同一のプロンプトを **Codex / Claude / Gemini** の 3 つの LLM CLI に同時投入し、各出力を TUI 上に表示しながら収集・保存するツールです。
 
 ```
 あなたの端末
@@ -10,12 +12,12 @@
    ▼
 nemagi (Node.js プロセス)
    │
-   ├─ tmux session (可視化)
-   │    ├─ [status] ペイン
-   │    ├─ [judge]  ペイン
-   │    ├─ [Codex]  ペイン  ← codex CLI が動く
-   │    ├─ [Claude] ペイン  ← claude CLI が動く
-   │    └─ [Gemini] ペイン  ← gemini CLI が動く
+   ├─ blessed TUI
+   │    ├─ [Prompt]
+   │    ├─ [Codex]
+   │    ├─ [Claude]
+   │    ├─ [Gemini]
+   │    └─ [Judge]
    │
    └─ sessions/ ディレクトリ (ターンごとにログを保存)
 ```
@@ -28,10 +30,10 @@ nemagi (Node.js プロセス)
 |--------|-------------|------|
 | Node.js 18 以上 | `node --version` | |
 | npm | `npm --version` | |
-| tmux | `tmux -V` | |
 | codex CLI | `codex --version` | 認証済みであること |
 | claude CLI | `claude --version` | 認証済みであること |
 | gemini CLI | `gemini --version` | 認証済みであること |
+| Ollama | `ollama list` | Judge 用モデルが取得済みであること |
 | TypeScript コンパイラ | 依存に含まれるため不要 | |
 
 ---
@@ -81,7 +83,15 @@ agents: {
 
 ## 使い方
 
-### 基本的な使い方 — 1 回のターンを実行する
+### 基本的な使い方 — TUI を起動する
+
+```bash
+npm start
+```
+
+起動後に TUI 内の prompt ダイアログで質問を入力します。
+
+### 引数つきでそのまま実行する
 
 ```bash
 npm start -- "質問や依頼をここに書く"
@@ -95,82 +105,36 @@ npm start -- "FizzBuzz を Python で書いてください"
 
 実行すると以下が起こります。
 
-1. tmux セッションが自動で作成される
-2. 3 つのエージェントペインが起動し、それぞれの CLI が同じプロンプトを受け取る
-3. 各エージェントの応答完了（またはタイムアウト）を待つ
-4. 結果が標準出力に JSON で出力される
-5. ログが `sessions/` 以下に保存される
+1. TUI が起動する
+2. 3 つのエージェントが同じプロンプトを受け取る
+3. 各エージェントの出力がリアルタイムで各ペインに流れる
+4. ペインタイトルに `▶` と状態 (`[thinking...]`, `[finish]`, `[failed]`) が出る
+5. Judge 結果が表示される
+6. ログが `sessions/` 以下に保存される
 
-**出力例:**
-
-```json
-{
-  "session": "nemagi-20260415120000-ab3xyz",
-  "turn": {
-    "id": "turn-1713180000000-cd4pqr",
-    "prompt": "FizzBuzz を Python で書いてください",
-    "startedAt": "2026-04-15T12:00:00.000Z",
-    "completedAt": "2026-04-15T12:00:45.123Z",
-    "status": "completed"
-  },
-  "responses": {
-    "codex":  { "status": "completed", "chars": 512, "exitCode": 0 },
-    "claude": { "status": "completed", "chars": 480, "exitCode": 0 },
-    "gemini": { "status": "completed", "chars": 390, "exitCode": 0 }
-  }
-}
-```
-
----
-
-### tmux セッションの中身を見る
-
-nemagi は実行中に tmux セッションを作成します。別の端末から確認できます。
-
-```bash
-# セッション一覧を表示
-tmux ls
-
-# セッションにアタッチ（セッション名は nemagi-... の形式）
-tmux attach -t nemagi-20260415120000-ab3xyz
-```
-
-アタッチすると 5 つのペインが tiled レイアウトで並んでいます。
+### TUI の見た目
 
 ```
-┌─────────────┬─────────────┐
-│   status    │    judge    │
-├─────────────┼─────────────┤
-│    Codex    │    Claude   │
-├─────────────┴─────────────┤
-│           Gemini          │
-└───────────────────────────┘
+┌──────────────────────────────────────────────┐
+│ Prompt                                       │
+├──────────────────────┬───────────────────────┤
+│ Codex                │ Claude                │
+├──────────────────────┼───────────────────────┤
+│ Gemini               │ Judge                 │
+└──────────────────────┴───────────────────────┘
 ```
 
----
+### TUI の操作
 
-### セッションだけ作成する (--bootstrap-only)
-
-エージェントを起動せずに tmux セッションの作成と確認だけ行うデバッグモードです。
-
-```bash
-npm start -- --bootstrap-only
-```
-
-出力例:
-
-```json
-{
-  "session": "nemagi-20260415120000-ab3xyz",
-  "panes": {
-    "status": "%0",
-    "judge":  "%1",
-    "codex":  "%2",
-    "claude": "%3",
-    "gemini": "%4"
-  }
-}
-```
+- `h` / `l` または `←` / `→`: ペイン移動
+- `tab` / `Shift+tab`: 次 / 前のペインへ移動
+- `1` / `2` / `3` / `4`: `Codex / Claude / Gemini / Judge` に直接移動
+- `j` / `k` または上下キー: スクロール
+- `Ctrl-u` / `Ctrl-d`: 半ページスクロール
+- `g` / `G`: 先頭 / 末尾へ移動
+- `z`: 現在ペインを拡大 / 戻す
+- `?`: ヘルプ表示
+- `q`: 終了
 
 ---
 
@@ -213,15 +177,22 @@ sessions/
 
 ```json
 {
-  "summary": "プロンプトと完了エージェントの一覧",
-  "comparison": "各エージェントのステータスと文字数",
+  "summary": "回答全体の要約",
+  "comparison": "各回答の比較",
+  "consensusAnswer": "多数派として採れる結論",
+  "supportingAgents": ["codex", "claude"],
+  "dissentingAgents": ["gemini"],
+  "consensusStrength": "mixed",
+  "majorityApplicable": true,
+  "needsHumanReview": false,
+  "judgeReason": "多数派の根拠と少数派の扱い",
   "recommendedAgent": "claude",
-  "scores": { "codex": 2, "claude": 2, "gemini": 1 }
+  "scores": { "codex": 4, "claude": 5, "gemini": 3 },
+  "provider": "ollama"
 }
 ```
 
-> **注意:** 現時点の Judge は出力文字数ベースのスコアリングです。
-> ローカル LLM との接続は未実装のため、内容に基づく評価は行われません。
+> **注意:** Judge はローカル LLM による比較整理です。明確な事実問題では多数派判定が有効ですが、意見や設計論では `majorityApplicable: false` になることがあります。
 
 **`*.jsonl`** — チャンク単位の生ログ
 
@@ -249,15 +220,6 @@ sessions/
 
 ## トラブルシューティング
 
-### `tmux command failed` エラー
-
-tmux がインストールされていないか、PATH が通っていません。
-
-```bash
-which tmux
-tmux -V
-```
-
 ### `codex` / `claude` / `gemini` コマンドが見つからない
 
 ```bash
@@ -270,28 +232,13 @@ which gemini
 
 ### エージェントが認証エラーで失敗する
 
-各 CLI の認証状態を個別に確認してください。nemagi の tmux ペインには各 CLI の出力がそのまま表示されるため、エラーメッセージも見えます。
+各 CLI の認証状態を個別に確認してください。nemagi の TUI には各 CLI の出力がそのまま表示されるため、エラーメッセージも見えます。
 
 ```bash
 # 認証確認の例
 claude --version
 codex --version
 gemini --version
-```
-
-### セッションが残り続ける
-
-nemagi は終了時に tmux セッションを自動削除しません。不要なセッションは手動で削除してください。
-
-```bash
-# セッション一覧
-tmux ls
-
-# セッション削除
-tmux kill-session -t nemagi-20260415120000-ab3xyz
-
-# nemagi 系セッションを全部削除
-tmux ls | grep '^nemagi-' | cut -d: -f1 | xargs -I{} tmux kill-session -t {}
 ```
 
 ### ビルド前に実行してしまった場合
@@ -312,7 +259,6 @@ Error: Cannot find module '...'
 
 ```typescript
 runtime: {
-  pollIntervalMs: 500,       // ポーリング間隔 (ms)
   maxTurnWaitMs: 180000,     // ターン全体の最大待機時間 (ms)
   workspaceDir: process.cwd(), // ログ保存先ルート
 },
@@ -323,6 +269,12 @@ agents: {
     cliPath: "codex",        // CLI コマンドのパス
   },
   // claude / gemini も同様
+},
+judge: {
+  enabled: true,                    // ローカル Judge を使う
+  baseUrl: "http://127.0.0.1:11434", // Ollama API
+  model: "gemma3:latest",           // Judge 用モデル
+  timeoutMs: 30000,                 // Judge の最大待機時間 (ms)
 }
 ```
 
@@ -330,6 +282,5 @@ agents: {
 
 ## 既知の制限事項
 
-- **Judge はスタブ実装です。** 現時点では出力文字数でスコアを計算するだけで、ローカル LLM による比較・要約は行いません。
-- **連続ターン実行の API はありません。** 現時点では 1 回のコマンド実行が 1 ターンに対応します。連続対話は将来の機能です。
-- **TUI (対話型インターフェース) はありません。** 入力はコマンドライン引数、出力は JSON です。
+- **Judge は補助的な比較器です。** 多数派を可視化しますが、最終的な正解判定器ではありません。
+- **連続ターン実行の API はありません。** 現時点では 1 回の起動が 1 ターンに対応します。連続対話は将来の機能です。

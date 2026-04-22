@@ -3,8 +3,8 @@ import type { AgentId } from "./agent";
 export interface SessionState {
   id: string;
   createdAt: string;
-  tmuxSessionName: string;
-  panes: Record<string, string>;
+  mode: "process-tui";
+  agents: AgentId[];
 }
 
 export interface TurnState {
@@ -35,4 +35,12 @@ export interface Judgement {
   comparison: string;
   recommendedAgent?: AgentId;
   scores: Record<AgentId, number>;
+  consensusAnswer?: string;
+  supportingAgents: AgentId[];
+  dissentingAgents: AgentId[];
+  consensusStrength: "strong" | "mixed" | "weak";
+  majorityApplicable: boolean;
+  needsHumanReview: boolean;
+  judgeReason: string;
+  provider: "ollama" | "heuristic";
 }

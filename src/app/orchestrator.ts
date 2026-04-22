@@ -2,82 +2,56 @@ import { join } from "node:path";
 import type { AgentId } from "../types/agent";
 import type { AppConfig } from "../types/runtime";
 import type { AgentResponse, SessionState, TurnState } from "../types/session";
-import type { TerminalRef } from "../types/terminal";
-import type { TerminalBackend } from "../terminal/backend";
 import type { AgentAdapter } from "../agents/adapter";
-import { OutputCollector, type CollectTarget } from "../collector/output-collector";
 import { JudgeService } from "../judge/judge-service";
 import { SessionStore } from "./session-store";
 import { buildSessionName, buildTurnId } from "../utils/ids";
 import { writeTextFile } from "../utils/fs";
-import { shellEscape } from "../utils/shell";
-
-interface PaneRegistry {
-  status: TerminalRef;
-  judge: TerminalRef;
-  agents: Record<AgentId, TerminalRef>;
-}
+import { ProcessRunner } from "../process/process-runner";
+import type { RunObserver } from "../types/ui";
 
 export class Orchestrator {
   private session?: SessionState;
-  private panes?: PaneRegistry;
   private priorJudgeSummary?: string;
-  private readonly collector: OutputCollector;
-  private readonly judge = new JudgeService();
+  private readonly judge: JudgeService;
   private readonly store: SessionStore;
+  private readonly runner: ProcessRunner;
 
   constructor(
     private readonly config: AppConfig,
-    private readonly backend: TerminalBackend,
     private readonly adapters: AgentAdapter[],
   ) {
-    this.collector = new OutputCollector(backend);
+    this.judge = new JudgeService(config.judge);
     this.store = new SessionStore(join(config.runtime.workspaceDir, "sessions"));
+    this.runner = new ProcessRunner(config.runtime.workspaceDir);
   }
 
   async bootstrap(): Promise<SessionState> {
-    if (this.session && this.panes) {
+    if (this.session) {
       return this.session;
     }
 
     const sessionName = buildSessionName(this.config.runtime.sessionPrefix);
-    const created = await this.backend.createSession(sessionName, this.config.runtime.statusPaneName);
-    const judgePane = await this.backend.createPane(sessionName, this.config.runtime.judgePaneName);
-    const agentPanes: Record<AgentId, TerminalRef> = {} as Record<AgentId, TerminalRef>;
-
-    for (const adapter of this.adapters) {
-      agentPanes[adapter.id] = await this.backend.createPane(sessionName, adapter.displayName);
-    }
-
-    this.panes = {
-      status: created.rootPane,
-      judge: judgePane,
-      agents: agentPanes,
-    };
 
     this.session = {
       id: sessionName,
       createdAt: new Date().toISOString(),
-      tmuxSessionName: sessionName,
-      panes: {
-        status: created.rootPane.paneId,
-        judge: judgePane.paneId,
-        codex: agentPanes.codex.paneId,
-        claude: agentPanes.claude.paneId,
-        gemini: agentPanes.gemini.paneId,
-      },
+      mode: "process-tui",
+      agents: this.adapters.map((adapter) => adapter.id),
     };
 
-    await this.backend.sendShellCommand(created.rootPane, `printf %s ${shellEscape(`nemagi session ${sessionName} ready\n`)}`);
     await this.store.saveSession(this.session);
     return this.session;
   }
 
-  async runTurn(prompt: string): Promise<{
+  async runTurn(
+    prompt: string,
+    observer?: RunObserver,
+  ): Promise<{
     turn: TurnState;
     responses: Record<AgentId, AgentResponse>;
   }> {
-    if (!this.session || !this.panes) {
+    if (!this.session) {
       await this.bootstrap();
     }
 
@@ -87,6 +61,7 @@ export class Orchestrator {
       startedAt: new Date().toISOString(),
       status: "running",
     };
+    observer?.onTurnStarted?.(turn);
 
     const plans = this.adapters.map((adapter) =>
       adapter.buildExecutionPlan({
@@ -95,86 +70,70 @@ export class Orchestrator {
       }),
     );
 
-    const targets: CollectTarget[] = [];
-    for (const plan of plans) {
-      const pane = this.panes!.agents[plan.agentId];
-      const startMarker = `__NEMAGI_TURN_START_${turn.id}_${plan.agentId}__`;
-      const endMarker = `__NEMAGI_TURN_END_${turn.id}_${plan.agentId}__`;
-      const wrapped = this.wrapTurnCommand(plan.shellCommand, startMarker, endMarker);
-      await this.backend.sendShellCommand(pane, wrapped);
-      targets.push({
-        agentId: plan.agentId,
-        pane,
-        startMarker,
-        endMarker,
-      });
-    }
+    const results = await Promise.all(
+      plans.map((plan) =>
+        this.runner.run(
+          {
+            agentId: plan.agentId,
+            displayName: plan.displayName,
+            shellCommand: plan.shellCommand,
+            completionPolicy: {
+              ...plan.completionPolicy,
+              maxWaitMs: Math.min(
+                plan.completionPolicy.maxWaitMs,
+                this.config.runtime.maxTurnWaitMs,
+              ),
+            },
+          },
+          observer,
+        ),
+      ),
+    );
 
-    let responses = await this.collector.poll(targets);
-    const deadline = Date.now() + this.config.runtime.maxTurnWaitMs;
-    while (Date.now() < deadline) {
-      const allDone = Object.values(responses).every((response) => response.status !== "running");
-      if (allDone) {
-        break;
-      }
+    const responses = Object.fromEntries(
+      results.map((response) => [response.agentId, response]),
+    ) as Record<AgentId, AgentResponse>;
 
-      await new Promise((resolve) => setTimeout(resolve, this.config.runtime.pollIntervalMs));
-      responses = await this.collector.poll(targets);
-    }
-
-    const deadlineReached = Object.values(responses).some((response) => response.status === "running");
-    if (deadlineReached) {
-      responses = this.markTimedOut(responses);
-      turn.status = "timed_out";
-    } else {
-      turn.status = "completed";
-    }
+    turn.status = this.deriveTurnStatus(responses);
     turn.completedAt = new Date().toISOString();
 
     const judgement = await this.judge.evaluate(prompt, responses);
     this.priorJudgeSummary = judgement.summary;
     await this.store.saveTurn(this.session!.id, turn, responses, judgement);
+    const judgementText = [
+      judgement.summary,
+      "",
+      `judge provider: ${judgement.provider}`,
+      `多数決を使う問いか: ${judgement.majorityApplicable}`,
+      `合意の強さ: ${judgement.consensusStrength}`,
+      `人手確認が必要か: ${judgement.needsHumanReview}`,
+      `支持したエージェント: ${judgement.supportingAgents.join(", ") || "なし"}`,
+      `異論のあるエージェント: ${judgement.dissentingAgents.join(", ") || "なし"}`,
+      `合意された答え: ${judgement.consensusAnswer ?? "なし"}`,
+      `judge の理由: ${judgement.judgeReason}`,
+      "",
+      judgement.comparison,
+    ].join("\n");
     await writeTextFile(
       join(this.config.runtime.workspaceDir, "sessions", this.session!.id, "latest-judge.txt"),
-      `${judgement.summary}\n\n${judgement.comparison}\n`,
+      `${judgementText}\n`,
     );
-    await this.backend.sendShellCommand(
-      this.panes!.judge,
-      `printf %s ${shellEscape(`${turn.id}\n${judgement.summary}\n\n${judgement.comparison}\n`)}`,
-    );
+    observer?.onJudgeReady?.(judgement);
+    observer?.onTurnFinished?.(turn, responses);
 
     return { turn, responses };
   }
 
-  private wrapTurnCommand(agentCommand: string, startMarker: string, endMarker: string): string {
-    const script = [
-      `printf '%s\\n' ${shellEscape(startMarker)}`,
-      agentCommand,
-      "status=$?",
-      `printf '%s:%s\\n' ${shellEscape(endMarker)} "$status"`,
-    ].join("; ");
-
-    return `sh -lc ${shellEscape(script)}`;
-  }
-
-  private markTimedOut(
+  private deriveTurnStatus(
     responses: Record<AgentId, AgentResponse>,
-  ): Record<AgentId, AgentResponse> {
-    return Object.fromEntries(
-      Object.entries(responses).map(([agentId, response]) => {
-        if (response.status !== "running") {
-          return [agentId, response];
-        }
-
-        return [
-          agentId,
-          {
-            ...response,
-            status: "timed_out",
-            error: "max_turn_wait_ms exceeded",
-          },
-        ];
-      }),
-    ) as Record<AgentId, AgentResponse>;
+  ): TurnState["status"] {
+    const statuses = Object.values(responses).map((response) => response.status);
+    if (statuses.includes("timed_out")) {
+      return "timed_out";
+    }
+    if (statuses.includes("failed")) {
+      return "failed";
+    }
+    return "completed";
   }
 }
