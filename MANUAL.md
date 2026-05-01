@@ -55,7 +55,25 @@ npm run build
 
 `dist/` ディレクトリが生成されたら成功です。
 
-### 3. CLI パスを確認する
+### 3. `nemagi` コマンドを登録する
+
+```bash
+npm link
+```
+
+これでローカル環境の PATH に `nemagi` コマンドが登録されます。
+
+`npm link` が `/usr/lib/node_modules` などの権限で失敗する場合は、PATH 上のユーザー bin に直接 symlink します。
+
+```bash
+ln -sfn "$(pwd)/dist/cli.js" ~/.local/bin/nemagi
+```
+
+```bash
+nemagi --help
+```
+
+### 4. CLI パスを確認する
 
 現時点の実装は `src/config/defaults.ts` の `cliPath` をそのまま使います。
 このリポジトリでは現在、各 CLI に絶対パスが入っています。自分の環境でパスが異なる場合は編集して再ビルドしてください。
@@ -83,10 +101,10 @@ agents: {
 
 ## 使い方
 
-### 基本的な使い方 — TUI を起動する
+### 基本的な使い方 - TUI を起動する
 
 ```bash
-npm start
+nemagi
 ```
 
 起動後に TUI 内の prompt ダイアログで質問を入力します。
@@ -94,14 +112,16 @@ npm start
 ### 引数つきでそのまま実行する
 
 ```bash
-npm start -- "質問や依頼をここに書く"
+nemagi "質問や依頼をここに書く"
 ```
 
 **例:**
 
 ```bash
-npm start -- "FizzBuzz を Python で書いてください"
+nemagi "FizzBuzz を Python で書いてください"
 ```
+
+開発中は従来どおり `npm start -- "質問や依頼をここに書く"` でも起動できます。
 
 実行すると以下が起こります。
 

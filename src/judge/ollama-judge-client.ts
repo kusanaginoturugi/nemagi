@@ -148,6 +148,7 @@ export class OllamaJudgeClient {
       recommendedAgent: recommendedAgent ?? undefined,
       scores,
       provider: "ollama",
+      model: this.config.model,
     };
   }
 

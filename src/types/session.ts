@@ -28,6 +28,7 @@ export interface AgentResponse {
   chunks: ResponseChunk[];
   exitCode?: number;
   error?: string;
+  diagnostics?: string;
 }
 
 export interface Judgement {
@@ -43,4 +44,5 @@ export interface Judgement {
   needsHumanReview: boolean;
   judgeReason: string;
   provider: "ollama" | "heuristic";
+  model?: string;
 }

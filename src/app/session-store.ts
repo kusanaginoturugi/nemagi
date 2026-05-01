@@ -29,6 +29,9 @@ export class SessionStore {
         .join("\n");
       await writeFile(join(turnDir, `${agentId}.jsonl`), jsonl, "utf8");
       await writeFile(join(turnDir, `${agentId}.txt`), response.output, "utf8");
+      if (response.diagnostics) {
+        await writeFile(join(turnDir, `${agentId}.stderr.txt`), response.diagnostics, "utf8");
+      }
     }
   }
 }

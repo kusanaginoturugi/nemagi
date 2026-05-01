@@ -103,7 +103,7 @@ export class Orchestrator {
     const judgementText = [
       judgement.summary,
       "",
-      `judge provider: ${judgement.provider}`,
+      `judge provider: ${judgement.provider}${judgement.model ? ` (${judgement.model})` : ""}`,
       `多数決を使う問いか: ${judgement.majorityApplicable}`,
       `合意の強さ: ${judgement.consensusStrength}`,
       `人手確認が必要か: ${judgement.needsHumanReview}`,

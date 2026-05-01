@@ -37,11 +37,20 @@ ollama list
 ```bash
 npm install
 npm run build
-npm start
-npm start -- "FizzBuzz を Python で書いてください"
+npm link
+nemagi
+nemagi "FizzBuzz を Python で書いてください"
 ```
 
-`npm start` は TUI を起動し、引数がなければ UI 内で質問を入力できます。引数を付けた場合は、そのまま実行が始まります。
+`npm link` 後は、どのディレクトリからでも `nemagi` コマンドで TUI を起動できます。引数がなければ UI 内で質問を入力できます。引数を付けた場合は、そのまま実行が始まります。
+
+`npm link` が global prefix の権限で失敗する環境では、PATH 上のユーザー bin に直接 symlink して使えます。
+
+```bash
+ln -sfn "$(pwd)/dist/cli.js" ~/.local/bin/nemagi
+```
+
+開発中は従来どおり `npm start -- "FizzBuzz を Python で書いてください"` でも起動できます。
 
 TUI の基本操作:
 

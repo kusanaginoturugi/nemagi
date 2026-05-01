@@ -17,6 +17,15 @@ interface PaneRefs {
 
 type PaneStatus = "input" | "waiting" | "thinking..." | "finish" | "failed" | "timed_out" | "ready";
 
+const TEXT_STYLE = {
+  fg: "black",
+} as const;
+
+const INPUT_STYLE = {
+  fg: "black",
+  bg: "white",
+} as const;
+
 export class NemagiTui implements RunObserver {
   private readonly screen: blessed.Widgets.Screen;
   private readonly panes: PaneRefs;
@@ -35,6 +44,7 @@ export class NemagiTui implements RunObserver {
     gemini: "waiting",
     judge: "waiting",
   };
+  private readonly paneNotices: Partial<Record<PaneId, string>> = {};
   private focusIndex = 1;
   private maximizedPane?: PaneId;
   private helpVisible = false;
@@ -62,7 +72,8 @@ export class NemagiTui implements RunObserver {
     }
 
     return new Promise((resolve, reject) => {
-      const prompt = blessed.prompt({
+      let settled = false;
+      const prompt = blessed.box({
         parent: this.screen,
         border: "line",
         height: 10,
@@ -71,18 +82,83 @@ export class NemagiTui implements RunObserver {
         left: "center",
         label: " Prompt ",
         tags: true,
+        style: {
+          border: { fg: "blue" },
+        },
       });
 
-      prompt.input("質問を入力してください", "", (error, value) => {
+      blessed.box({
+        parent: prompt,
+        top: 1,
+        left: 2,
+        height: 2,
+        width: "100%-4",
+        content: "質問を入力してください",
+        style: TEXT_STYLE,
+      });
+
+      const input = blessed.textbox({
+        parent: prompt,
+        top: 3,
+        left: 2,
+        width: "100%-4",
+        height: 3,
+        border: "line",
+        inputOnFocus: true,
+        keys: true,
+        style: {
+          ...INPUT_STYLE,
+          border: { fg: "blue" },
+          focus: {
+            ...INPUT_STYLE,
+            border: { fg: "green" },
+          },
+        },
+      });
+
+      blessed.box({
+        parent: prompt,
+        top: 7,
+        left: 2,
+        width: "100%-4",
+        height: 1,
+        content: "Enter: OK    Escape: Cancel",
+        style: TEXT_STYLE,
+      });
+
+      const submitPrompt = (): void => finish(undefined, input.getValue());
+      const cancelPrompt = (): void => finish(new Error("Prompt is required"));
+
+      const finish = (error?: Error, value?: string): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        input.unkey("enter", submitPrompt);
+        input.unkey("return", submitPrompt);
+        input.unkey("escape", cancelPrompt);
+        this.screen.unkey("enter", submitPrompt);
+        this.screen.unkey("return", submitPrompt);
+        this.screen.unkey("escape", cancelPrompt);
         prompt.destroy();
         this.screen.render();
         if (error || !value || value.trim().length === 0) {
-          reject(new Error("Prompt is required"));
+          reject(error ?? new Error("Prompt is required"));
           return;
         }
 
         this.setPrompt(value);
         resolve(value);
+      };
+
+      input.key(["enter", "return"], submitPrompt);
+      input.key(["escape"], cancelPrompt);
+      this.screen.key(["enter", "return"], submitPrompt);
+      this.screen.key(["escape"], cancelPrompt);
+      input.focus();
+      this.screen.render();
+      input.input((error, value) => {
+        finish(error instanceof Error ? error : undefined, value);
       });
     });
   }
@@ -93,6 +169,7 @@ export class NemagiTui implements RunObserver {
 
   onTurnStarted(turn: TurnState): void {
     this.clearLogs();
+    this.clearNotices();
     this.paneStatuses.codex = "waiting";
     this.paneStatuses.claude = "waiting";
     this.paneStatuses.gemini = "waiting";
@@ -105,12 +182,19 @@ export class NemagiTui implements RunObserver {
 
   onAgentStarted(agentId: AgentId, displayName: string): void {
     this.paneStatuses[agentId] = "thinking...";
+    this.paneNotices[agentId] = undefined;
     this.updatePaneLabels();
     this.log(agentId, `[started] ${displayName}`);
   }
 
   onAgentChunk(agentId: AgentId, chunk: string): void {
     this.log(agentId, chunk);
+  }
+
+  onAgentNotice(agentId: AgentId, notice: string): void {
+    this.paneNotices[agentId] = notice;
+    this.updatePaneLabels();
+    this.log(agentId, `[notice] ${notice}`);
   }
 
   onAgentFinished(agentId: AgentId, response: AgentResponse): void {
@@ -132,7 +216,7 @@ export class NemagiTui implements RunObserver {
       [
         judgement.summary,
         "",
-        `judge provider: ${judgement.provider}`,
+        `judge provider: ${judgement.provider}${judgement.model ? ` (${judgement.model})` : ""}`,
         `多数決を使う問いか: ${judgement.majorityApplicable}`,
         `合意の強さ: ${judgement.consensusStrength}`,
         `人手確認が必要か: ${judgement.needsHumanReview}`,
@@ -168,7 +252,6 @@ export class NemagiTui implements RunObserver {
       scrollable: true,
       alwaysScroll: true,
       keys: true,
-      mouse: true,
       scrollbar: {
         ch: " ",
       },
@@ -181,7 +264,6 @@ export class NemagiTui implements RunObserver {
       parent: this.screen,
       border: "line",
       keys: true,
-      mouse: true,
       scrollable: true,
       alwaysScroll: true,
       tags: false,
@@ -256,15 +338,13 @@ export class NemagiTui implements RunObserver {
       hidden: true,
       scrollable: true,
       keys: true,
-      mouse: true,
       padding: {
         left: 1,
         right: 1,
       },
       style: {
-        border: { fg: "yellow" },
-        bg: "black",
-        fg: "white",
+        ...INPUT_STYLE,
+        border: { fg: "blue" },
       },
       content: [
         "閲覧キー",
@@ -543,6 +623,14 @@ export class NemagiTui implements RunObserver {
     this.panes.judge.setContent("");
   }
 
+  private clearNotices(): void {
+    this.paneNotices.prompt = undefined;
+    this.paneNotices.codex = undefined;
+    this.paneNotices.claude = undefined;
+    this.paneNotices.gemini = undefined;
+    this.paneNotices.judge = undefined;
+  }
+
   private setPrompt(prompt: string): void {
     this.panes.prompt.setContent(prompt);
     this.screen.render();
@@ -588,7 +676,16 @@ export class NemagiTui implements RunObserver {
       const prefix = paneId === focusedPane ? "▶ " : "";
       const title = this.paneTitles[paneId];
       const status = this.paneStatuses[paneId];
-      this.panes[paneId].setLabel(` ${prefix}${title} [${status}] `);
+      const notice = this.paneNotices[paneId];
+      const noticeSuffix = notice ? ` ! ${this.shortenLabel(notice, 24)}` : "";
+      this.panes[paneId].setLabel(` ${prefix}${title} [${status}]${noticeSuffix} `);
     }
+  }
+
+  private shortenLabel(text: string, maxLength: number): string {
+    if (text.length <= maxLength) {
+      return text;
+    }
+    return `${text.slice(0, maxLength - 1)}…`;
   }
 }

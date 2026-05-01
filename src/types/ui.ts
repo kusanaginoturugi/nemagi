@@ -5,6 +5,7 @@ export interface RunObserver {
   onTurnStarted?(turn: TurnState): void;
   onAgentStarted?(agentId: AgentId, displayName: string): void;
   onAgentChunk?(agentId: AgentId, chunk: string): void;
+  onAgentNotice?(agentId: AgentId, notice: string): void;
   onAgentFinished?(agentId: AgentId, response: AgentResponse): void;
   onJudgeReady?(judgement: Judgement): void;
   onTurnFinished?(turn: TurnState, responses: Record<AgentId, AgentResponse>): void;
